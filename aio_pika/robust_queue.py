@@ -21,7 +21,6 @@ from .exchange import ExchangeParamType
 from .log import get_logger
 from .queue import Queue, QueueIterator
 
-
 log = get_logger(__name__)
 
 
@@ -217,7 +216,16 @@ class RobustQueueIterator(QueueIterator):
         channel = self._amqp_queue.channel
         if hasattr(channel, "_connection"):
             connection = channel._connection
-            connection.closed().add_done_callback(self._on_connection_closed)
+            self._connection_closed = connection.closed()
+            self._connection_closed.add_done_callback(
+                self._on_connection_closed,
+            )
+            self._closed.add_done_callback(self._unregister_connection_closed)
+
+    def _unregister_connection_closed(self, _: asyncio.Future) -> None:
+        self._connection_closed.remove_done_callback(
+            self._on_connection_closed,
+        )
 
     def _on_connection_closed(self, _: asyncio.Future) -> None:
         """Handle connection closed - set _closed to stop iteration."""

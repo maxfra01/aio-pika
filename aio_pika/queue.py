@@ -15,7 +15,6 @@ from typing import (
 
 import aiormq
 from aiormq.abc import DeliveredMessage
-
 from pamqp.common import Arguments
 
 from .abc import (
@@ -32,7 +31,6 @@ from .exchange import ExchangeParamType
 from .log import get_logger
 from .message import IncomingMessage
 from .tools import CallbackCollection, create_task, ensure_awaitable
-
 
 log = get_logger(__name__)
 
@@ -534,16 +532,22 @@ class QueueIterator(AbstractQueueIterator):
         self._timeout_event = asyncio.Event()
         self._consume_kwargs = kwargs
 
-        cast(
+        self._channel_closed = cast(
             asyncio.Future, self._amqp_queue.channel.closed()
-        ).add_done_callback(self._propagate_closed)
+        )
+        self._channel_closed.add_done_callback(self._propagate_closed)
+
         self._closed.add_done_callback(self._propagate_closed)
+        self._closed.add_done_callback(self._unregister_channel_closed)
 
         self._amqp_queue.close_callbacks.add(self._on_close, weak=True)
         self._amqp_queue.close_callbacks.add(self._set_closed, weak=True)
 
     def _propagate_closed(self, _: Future) -> None:
         self._message_or_closed.set()
+
+    def _unregister_channel_closed(self, _: Future) -> None:
+        self._channel_closed.remove_done_callback(self._propagate_closed)
 
     async def on_message(self, message: AbstractIncomingMessage) -> None:
         await self._queue.put(message)
