@@ -127,3 +127,39 @@ async def test_get_queue_no_memory_leak(create_robust_connection):
         # Verify internal storage has only one queue for this name
         assert name in channel._queues
         assert len(channel._queues[name]) == 1
+
+
+async def test_closed_queue_iterator_no_memory_leak(create_connection):
+    """Test that closed queue iterators are garbage collected while the
+    channel and connection are still open.
+
+    This verifies the fix for the memory leak where every iterator registered
+    a done callback on the channel (and, for robust iterators, the
+    connection) ``closed()`` future. The bound method kept the iterator alive
+    until the channel was closed, so long-lived channels accumulated
+    iterators.
+    """
+    connection = await create_connection()
+
+    weakset: weakref.WeakSet[aio_pika.abc.AbstractQueueIterator] = (
+        weakref.WeakSet()
+    )
+
+    async def f(queue: aio_pika.abc.AbstractQueue, weakset):
+        async with queue.iterator() as queue_iterator:
+            weakset.add(queue_iterator)
+
+    async with connection:
+        channel = await connection.channel()
+        queue = await channel.declare_queue(
+            get_random_name("memory", "leak", "iterator"),
+            auto_delete=True,
+        )
+
+        for _ in range(5):
+            await f(queue, weakset)
+
+        gc.collect()
+
+        assert not channel.is_closed
+        assert len(tuple(weakset)) == 0
